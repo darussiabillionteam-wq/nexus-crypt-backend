@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(ADMIN)
+  active       Boolean   @default(true)
+  devices      Device[]
+  logs         AuditLog[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Device {
+  id           String    @id @default(cuid())
+  name         String
+  model        String
+  imei         String    @unique
+  serialNumber String?
+  udid         String?   @unique
+  iosVersion   String
+  battery      Int       @default(100)
+  storageUsed  Int       @default(0)
+  storageTotal Int       @default(128)
+  status       DeviceStatus @default(ACTIVE)
+  location     String    @default("Desconhecida")
+  lastSeen     DateTime  @default(now())
+  pushToken    String?
+  enrolledAt   DateTime?
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id])
+  actions      DeviceAction[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model DeviceAction {
+  id         String   @id @default(cuid())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  action     String
+  status     String   @default("PENDENTE")
+  result     String?
+  executedBy String?
+  executedAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  target    String
+  ip        String?
+  userAgent String?
+  hash      String
+  createdAt DateTime @default(now())
+}
+
+model AppleConfig {
+  id            String   @id @default(cuid())
+  apnsCert      String?
+  apnsKey       String?
+  mdmCert       String?
+  mdmKey        String?
+  teamId        String?
+  keyId         String?
+  bundleId      String?
+  mdmTopic      String?
+  appleId       String?
+  orgName       String   @default("Nexus Crypt Soluções de Segurança")
+  department    String   @default("Gerenciamento de Risco e TI")
+  supportEmail  String?
+  isConfigured  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+}
+
+enum DeviceStatus {
+  ACTIVE
+  LOCKED
+  OFFLINE
+  WIPED
+  PENDING
+}
