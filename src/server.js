@@ -100,7 +100,10 @@ app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/devices', devicesRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/config', configRoutes);
+
+// ✅ CORREÇÃO 10 — Rotas MDM registradas em DUAS URLs (compatibilidade com frontend)
 app.use('/mdm', mdmRoutes);
+app.use('/api/mdm', mdmRoutes);
 
 // ✅ CORREÇÃO 7 — 404 handler
 app.use((req, res) => {
