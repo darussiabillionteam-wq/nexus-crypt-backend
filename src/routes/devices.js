@@ -81,6 +81,66 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ============================================================
+// PATCH - Atualiza dados do device (ex: simplemdmId)
+// ============================================================
+router.patch('/:id', async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) {
+      return res.status(404).json({ error: 'Dispositivo não encontrado' });
+    }
+
+    const allowedFields = [
+      'name',
+      'model',
+      'imei',
+      'serialNumber',
+      'udid',
+      'iosVersion',
+      'battery',
+      'storageUsed',
+      'storageTotal',
+      'status',
+      'location',
+      'simplemdmId',
+      'pushToken',
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
+    }
+
+    const updated = await prisma.device.update({
+      where: { id: req.params.id },
+      data: updates,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId,
+        action: 'ATUALIZAR_DEVICE',
+        target: `${device.name} (${device.imei})`,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        hash: Math.random().toString(36).substring(2, 10),
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('[DEVICES] Erro ao atualizar:', error);
+    res.status(500).json({ error: 'Erro ao atualizar dispositivo' });
+  }
+});
+
 router.delete('/:id', async (req, res) => {
   try {
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
