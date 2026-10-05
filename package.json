@@ -27,6 +27,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "node-apn": "^3.0.0",
+    "node-fetch": "^3.3.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {

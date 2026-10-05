@@ -2,6 +2,13 @@ import express from 'express';
 import crypto from 'crypto';
 import prisma from '../config/prisma.js';
 import { authMiddleware } from '../middlewares/auth.js';
+import {
+  bloquearDispositivo,
+  apagarDispositivo,
+  reiniciarDispositivo,
+  localizarDispositivo,
+  enviarMensagem,
+} from '../services/simplemdm.js';
 
 const router = express.Router();
 
@@ -20,26 +27,22 @@ router.get('/enroll', async (req, res) => {
     const checkinUrl = 'https://nexus-crypt-backend.onrender.com/mdm/checkin';
     const topic = config.mdmTopic;
 
-    // UUIDs únicos pra cada payload
     const payloadUUID = crypto.randomUUID();
     const mdmPayloadUUID = crypto.randomUUID();
     const certPayloadUUID = crypto.randomUUID();
     const keyPayloadUUID = crypto.randomUUID();
     const payloadIdentifier = `com.nexuscrypt.mdm.${payloadUUID}`;
 
-    // Extrai base64 do certificado (sem header/footer)
     const certBase64 = config.mdmCert
       .replace(/-----BEGIN CERTIFICATE-----/g, '')
       .replace(/-----END CERTIFICATE-----/g, '')
       .replace(/\s/g, '');
 
-    // Extrai base64 da chave
     const keyBase64 = config.mdmKey
       .replace(/-----BEGIN PRIVATE KEY-----/g, '')
       .replace(/-----END PRIVATE KEY-----/g, '')
       .replace(/\s/g, '');
 
-    // Monta o .mobileconfig
     const mobileconfig = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -47,7 +50,6 @@ router.get('/enroll', async (req, res) => {
   <key>PayloadContent</key>
   <array>
 
-    <!-- 1. Certificado MDM -->
     <dict>
       <key>PayloadCertificateFileName</key>
       <string>nexus-cert.pem</string>
@@ -67,7 +69,6 @@ router.get('/enroll', async (req, res) => {
       <integer>1</integer>
     </dict>
 
-    <!-- 2. Chave privada -->
     <dict>
       <key>PayloadCertificateFileName</key>
       <string>nexus-key.pem</string>
@@ -87,7 +88,6 @@ router.get('/enroll', async (req, res) => {
       <integer>1</integer>
     </dict>
 
-    <!-- 3. MDM Payload -->
     <dict>
       <key>AccessRights</key>
       <integer>8191</integer>
@@ -272,7 +272,7 @@ router.put('/command/result', async (req, res) => {
 });
 
 // ============================================================
-// COMANDOS DO PAINEL ADMIN
+// COMANDOS DO PAINEL ADMIN (banco local)
 // ============================================================
 router.post('/devices/:id/lock', authMiddleware, async (req, res) => {
   try {
@@ -347,6 +347,109 @@ router.post('/devices/:id/restart', authMiddleware, async (req, res) => {
     res.json({ success: true, message: 'Comando RESTART enviado' });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao reiniciar' });
+  }
+});
+
+// ============================================================
+// INTEGRAÇÃO SIMPLEMDM — Comandos reais via API
+// ============================================================
+router.post('/devices/:id/simple-lock', authMiddleware, async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'Device não encontrado' });
+    if (!device.simplemdmId) return res.status(400).json({ error: 'Device não tem simplemdmId vinculado' });
+
+    const result = await bloquearDispositivo(device.simplemdmId, 'Bloqueado pelo Nexus Crypt', null);
+    if (!result.ok) return res.status(result.status).json({ error: 'Erro no SimpleMDM', details: result.data });
+
+    await prisma.device.update({ where: { id: device.id }, data: { status: 'LOCKED' } });
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId, action: 'BLOQUEAR',
+        target: `${device.name} (${device.imei})`,
+        ip: req.ip, userAgent: req.headers['user-agent'],
+        hash: Math.random().toString(36).substring(2, 10),
+      },
+    });
+
+    res.json({ success: true, message: 'LOCK enviado via SimpleMDM', result: result.data });
+  } catch (error) {
+    console.error('[simple-lock]', error);
+    res.status(500).json({ error: 'Erro ao bloquear' });
+  }
+});
+
+router.post('/devices/:id/simple-wipe', authMiddleware, async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'Device não encontrado' });
+    if (!device.simplemdmId) return res.status(400).json({ error: 'Device não tem simplemdmId vinculado' });
+
+    const result = await apagarDispositivo(device.simplemdmId);
+    if (!result.ok) return res.status(result.status).json({ error: 'Erro no SimpleMDM', details: result.data });
+
+    await prisma.device.update({ where: { id: device.id }, data: { status: 'WIPED' } });
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId, action: 'APAGAR',
+        target: `${device.name} (${device.imei})`,
+        ip: req.ip, userAgent: req.headers['user-agent'],
+        hash: Math.random().toString(36).substring(2, 10),
+      },
+    });
+
+    res.json({ success: true, message: 'WIPE enviado via SimpleMDM' });
+  } catch (error) {
+    console.error('[simple-wipe]', error);
+    res.status(500).json({ error: 'Erro ao apagar' });
+  }
+});
+
+router.post('/devices/:id/simple-restart', authMiddleware, async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'Device não encontrado' });
+    if (!device.simplemdmId) return res.status(400).json({ error: 'Device não tem simplemdmId vinculado' });
+
+    const result = await reiniciarDispositivo(device.simplemdmId);
+    if (!result.ok) return res.status(result.status).json({ error: 'Erro no SimpleMDM', details: result.data });
+
+    res.json({ success: true, message: 'RESTART enviado via SimpleMDM' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao reiniciar' });
+  }
+});
+
+router.post('/devices/:id/simple-locate', authMiddleware, async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'Device não encontrado' });
+    if (!device.simplemdmId) return res.status(400).json({ error: 'Device não tem simplemdmId vinculado' });
+
+    const result = await localizarDispositivo(device.simplemdmId);
+    if (!result.ok) return res.status(result.status).json({ error: 'Erro no SimpleMDM', details: result.data });
+
+    res.json({ success: true, message: 'Localização solicitada via SimpleMDM' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao localizar' });
+  }
+});
+
+router.post('/devices/:id/simple-message', authMiddleware, async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'Device não encontrado' });
+    if (!device.simplemdmId) return res.status(400).json({ error: 'Device não tem simplemdmId vinculado' });
+
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Mensagem obrigatória' });
+
+    const result = await enviarMensagem(device.simplemdmId, message);
+    if (!result.ok) return res.status(result.status).json({ error: 'Erro no SimpleMDM', details: result.data });
+
+    res.json({ success: true, message: 'Mensagem enviada via SimpleMDM' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao enviar' });
   }
 });
 
