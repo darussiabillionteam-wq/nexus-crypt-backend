@@ -9,6 +9,7 @@ import devicesRoutes from './routes/devices.js';
 import logsRoutes from './routes/logs.js';
 import configRoutes from './routes/config.js';
 import mdmRoutes from './routes/mdm.js';
+import enrollmentRoutes from './routes/enrollment.js';
 
 dotenv.config();
 
@@ -16,7 +17,6 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ✅ CORREÇÃO 1 — Confiar no proxy do Render
-// Isso resolve o erro ERR_ERL_UNEXPECTED_X_FORWARDED_FOR do express-rate-limit
 app.set('trust proxy', 1);
 
 // ✅ CORREÇÃO 2 — Helmet sem bloquear o painel
@@ -25,13 +25,12 @@ app.use(helmet({
   contentSecurityPolicy: false,
 }));
 
-// ✅ CORREÇÃO 3 — CORS robusto (aceita localhost, Render, e domínios extras)
+// ✅ CORREÇÃO 3 — CORS robusto
 const allowedOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 
-// Adiciona automaticamente os domínios do Render e localhost
 const defaultOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
@@ -45,13 +44,9 @@ const allOrigins = [...new Set([...allowedOrigins, ...defaultOrigins])];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Permite requests sem origin (Postman, curl, mobile apps)
     if (!origin) return callback(null, true);
-    // Permite se tá na lista
     if (allOrigins.includes(origin)) return callback(null, true);
-    // Permite qualquer subdomínio do onrender.com
     if (origin.endsWith('.onrender.com')) return callback(null, true);
-    // Bloqueia o resto
     console.warn(`[CORS] Origem bloqueada: ${origin}`);
     callback(new Error('Origem não permitida'));
   },
@@ -60,11 +55,11 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
-// ✅ CORREÇÃO 4 — Body parser com limites maiores (certificados .pem em base64)
+// ✅ CORREÇÃO 4 — Body parser com limites maiores
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ✅ CORREÇÃO 5 — Rate limit com skip de health check e IP correto via trust proxy
+// ✅ CORREÇÃO 5 — Rate limit
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
@@ -100,8 +95,9 @@ app.use('/api/auth', loginLimiter, authRoutes);
 app.use('/api/devices', devicesRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/enrollment', enrollmentRoutes);
 
-// ✅ CORREÇÃO 10 — Rotas MDM registradas em DUAS URLs (compatibilidade com frontend)
+// ✅ CORREÇÃO 10 — Rotas MDM em DUAS URLs
 app.use('/mdm', mdmRoutes);
 app.use('/api/mdm', mdmRoutes);
 
