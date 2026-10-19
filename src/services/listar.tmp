@@ -1,0 +1,27 @@
+export async function listarDispositivos() {
+  const todos = [];
+  let startingAfter = null;
+
+  while (true) {
+    const query = startingAfter
+      ? `/devices?limit=100&starting_after=${encodeURIComponent(startingAfter)}`
+      : '/devices?limit=100';
+
+    const result = await chamarSimpleMDM(query, 'GET');
+
+    if (!result.ok) return result;
+
+    const pagina = result.data.data || [];
+    todos.push(...pagina);
+
+    if (!result.data.has_more || pagina.length === 0) break;
+
+    startingAfter = String(pagina[pagina.length - 1].id);
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    data: { data: todos },
+  };
+}

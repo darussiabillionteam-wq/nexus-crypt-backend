@@ -39,8 +39,54 @@ async function chamarSimpleMDM(endpoint, method = 'GET', body = null) {
   }
 }
 
+// ============================================================
+// LISTAR TODOS OS DISPOSITIVOS — paginação SimpleMDM
+// ============================================================
 export async function listarDispositivos() {
-  return chamarSimpleMDM('/devices', 'GET');
+  const todos = [];
+  let startingAfter = null;
+
+  while (true) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (startingAfter !== null) {
+      params.set('starting_after', startingAfter);
+    }
+
+    const result = await chamarSimpleMDM(`/devices?${params.toString()}`, 'GET');
+
+    if (!result.ok) {
+      console.error(`[SimpleMDM] Erro ao listar dispositivos (HTTP ${result.status})`, result.data);
+      return result;
+    }
+
+    const pagina = result.data?.data;
+
+    if (!Array.isArray(pagina)) {
+      console.error('[SimpleMDM] Resposta inesperada ao listar dispositivos.');
+      return { ok: false, status: 502, data: { error: 'Formato de resposta inesperado.' } };
+    }
+
+    todos.push(...pagina);
+
+    if (result.data.has_more !== true || pagina.length === 0) {
+      break;
+    }
+
+    const ultimoId = pagina[pagina.length - 1].id;
+    if (ultimoId === undefined || ultimoId === null) {
+      break;
+    }
+
+    startingAfter = String(ultimoId);
+  }
+
+  console.log(`[SimpleMDM] Total de dispositivos recebidos: ${todos.length}`);
+
+  return {
+    ok: true,
+    status: 200,
+    data: { data: todos },
+  };
 }
 
 export async function buscarDispositivo(simplemdmId) {
